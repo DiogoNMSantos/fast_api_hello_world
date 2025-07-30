@@ -20,6 +20,7 @@ jobs:
       run: |
         pip install civo==1.0.8
         pip install fabric
+        pip install requests
     - name: Add ssh private key to the server
       run: |
         mkdir -p $HOME/.ssh/

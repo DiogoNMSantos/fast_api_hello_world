@@ -110,24 +110,39 @@ try:
         else:
             raise Exception(f"Templates API returned status {response.status_code}: {response.text}")
     
-    print(f"Available templates: {[t.get('code', t.get('name', 'unknown')) for t in templates[:5]] if templates else 'No templates found'}")
+    # Filter OUT k3s templates and keep only OS templates
+    os_templates = [t for t in templates if t.get('distribution') not in ['civo-k3s-alpine', 'civo-k3s']]
+    k3s_templates = [t for t in templates if t.get('distribution') in ['civo-k3s-alpine', 'civo-k3s']]
     
-    # Try to find a suitable template
-    template_candidates = ['ubuntu-focal', 'ubuntu-jammy', 'ubuntu-bionic', 'debian-11', 'debian-10']
+    print(f"Total templates found: {len(templates)}")
+    print(f"K3s templates (filtered out): {len(k3s_templates)} - {[t['name'] for t in k3s_templates[:3]]}")
+    print(f"OS templates available: {len(os_templates)} - {[t['name'] for t in os_templates[:5]]}")
+    
+    # Try to find a suitable OS template (prioritize Ubuntu)
+    template_candidates = ['ubuntu-noble', 'ubuntu-jammy', 'ubuntu-focal', 'debian-12', 'debian-11', 'rocky-10', 'rocky-9']
     template_id = None
+    template_name = None
     
     for candidate in template_candidates:
-        matching_templates = [t for t in templates if t.get('code') == candidate]
+        matching_templates = [t for t in os_templates if t['name'] == candidate]
         if matching_templates:
             template_id = matching_templates[0]['id']
-            print(f"Using template: {candidate} (ID: {template_id})")
+            template_name = candidate
+            template_distribution = matching_templates[0].get('distribution', 'unknown')
+            print(f"✅ Using template: {template_name} (ID: {template_id}) - Distribution: {template_distribution}")
             break
     
-    if not template_id:
-        # Fallback to first available template
+    if not template_id and os_templates:
+        # Fallback to first available OS template (not k3s)
+        template_id = os_templates[0]['id']
+        template_name = os_templates[0]['name']
+        template_distribution = os_templates[0].get('distribution', 'unknown')
+        print(f"⚠️ Using fallback OS template: {template_name} (ID: {template_id}) - Distribution: {template_distribution}")
+    elif not template_id:
+        # Last resort: use any template (this shouldn't happen with proper filtering)
         template_id = templates[0]['id'] if templates else None
-        template_name = templates[0].get('code', templates[0].get('name', 'unknown')) if templates else 'unknown'
-        print(f"Using fallback template: {template_name} (ID: {template_id})")
+        template_name = templates[0].get('name', 'unknown') if templates else 'unknown'
+        print(f"❌ FALLBACK: Using any available template: {template_name} (ID: {template_id})")
     
     if not template_id:
         raise Exception("No suitable template found")
@@ -279,9 +294,20 @@ try:
                     # Give the instance a bit more time to fully boot
                     time.sleep(30)
                     
+                    # Determine the correct user based on the template
+                    user = 'root'  # Default fallback
+                    if template_name and 'ubuntu' in template_name.lower():
+                        user = 'ubuntu'
+                    elif template_name and 'debian' in template_name.lower():
+                        user = 'admin'
+                    elif template_name and 'rocky' in template_name.lower():
+                        user = 'rocky'
+                    
+                    print(f"Connecting as user: {user}")
+                    
                     conn = Connection(
                         host=instance['public_ip'],
-                        user='root',  # Adjust user as needed
+                        user=user,
                         connect_kwargs={
                             "key_filename": "~/.ssh/id_rsa",  # Adjust path as needed
                         },
@@ -299,8 +325,18 @@ try:
                         print("nginx already installed")
                     except:
                         print("Installing nginx...")
-                        conn.run('apt-get update')
-                        conn.run('apt-get install -y nginx')
+                        if template_name and ('ubuntu' in template_name.lower() or 'debian' in template_name.lower()):
+                            # Debian/Ubuntu
+                            conn.run('apt-get update')
+                            conn.run('apt-get install -y nginx')
+                        elif template_name and 'rocky' in template_name.lower():
+                            # Rocky Linux
+                            conn.run('dnf update -y')
+                            conn.run('dnf install -y nginx')
+                        else:
+                            # Fallback to apt (most common)
+                            conn.run('apt-get update')
+                            conn.run('apt-get install -y nginx')
                     
                     # Start nginx
                     conn.run('systemctl enable nginx')
