@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FastAPI Hello World - GitOps Deployment</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+            padding: 50px 20px;
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        h1 {
+            font-size: 3em;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        h2 {
+            font-size: 1.5em;
+            margin-bottom: 30px;
+            opacity: 0.9;
+        }
+        .status {
+            background: rgba(46, 204, 113, 0.2);
+            border: 2px solid #2ecc71;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .info {
+            background: rgba(52, 152, 219, 0.2);
+            border: 2px solid #3498db;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .timestamp {
+            font-style: italic;
+            opacity: 0.8;
+            margin-top: 30px;
+        }
+        a {
+            color: #74b9ff;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 FastAPI Hello World</h1>
+        <h2>Deployed with GitOps & GitHub Actions</h2>
+        
+        <div class="status">
+            <h3>✅ Deployment Successful</h3>
+            <p>Your FastAPI application has been successfully deployed to Civo using GitOps!</p>
+        </div>
+        
+        <div class="info">
+            <h3>📋 Deployment Information</h3>
+            <p><strong>Platform:</strong> Civo Cloud</p>
+            <p><strong>Deployment Method:</strong> GitOps with GitHub Actions</p>
+            <p><strong>Web Server:</strong> Nginx</p>
+            <p><strong>Application:</strong> FastAPI Hello World</p>
+        </div>
+        
+        <div class="info">
+            <h3>🔗 API Endpoints</h3>
+            <p>If your FastAPI app is running, you can access:</p>
+            <p><a href="/docs" target="_blank">📚 API Documentation (/docs)</a></p>
+            <p><a href="/health" target="_blank">❤️ Health Check (/health)</a></p>
+            <p><a href="/info" target="_blank">ℹ️ App Info (/info)</a></p>
+        </div>
+        
+        <div class="timestamp">
+            <p>Page generated: <span id="datetime"></span></p>
+        </div>
+    </div>
+
+    <script>
+        // Display current date and time
+        document.getElementById('datetime').textContent = new Date().toLocaleString();
+    </script>
+</body>
+</html> 
