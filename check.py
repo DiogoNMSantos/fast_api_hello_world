@@ -215,47 +215,78 @@ try:
                 firewall_id = web_firewall['id']
                 print(f"Using existing web firewall: {web_firewall['name']} (ID: {firewall_id})")
             else:
-                # Create a new firewall with HTTP/HTTPS rules
-                print("Creating new firewall with HTTP/HTTPS rules...")
-                firewall_data = {
-                    'name': f'web-firewall-{hostname_default}',
-                    'rules': [
-                        {
-                            'protocol': 'tcp',
-                            'start_port': '80',
-                            'end_port': '80',
-                            'cidr': ['0.0.0.0/0'],
-                            'direction': 'ingress',
-                            'label': 'HTTP'
-                        },
-                        {
-                            'protocol': 'tcp', 
-                            'start_port': '443',
-                            'end_port': '443',
-                            'cidr': ['0.0.0.0/0'],
-                            'direction': 'ingress',
-                            'label': 'HTTPS'
-                        },
-                        {
-                            'protocol': 'tcp',
-                            'start_port': '22',
-                            'end_port': '22', 
-                            'cidr': ['0.0.0.0/0'],
-                            'direction': 'ingress',
-                            'label': 'SSH'
+                # Get the default network first
+                print("Getting default network...")
+                network_response = requests.get('https://api.civo.com/v2/networks', headers=headers)
+                if network_response.status_code == 200:
+                    networks = network_response.json()
+                    if isinstance(networks, dict) and 'items' in networks:
+                        networks = networks['items']
+                    
+                    # Find default network
+                    default_network = None
+                    for network in networks:
+                        if network.get('default', False) or 'default' in network.get('name', '').lower():
+                            default_network = network
+                            break
+                    
+                    if not default_network and networks:
+                        default_network = networks[0]  # Use first network as fallback
+                    
+                    if default_network:
+                        print(f"Using network: {default_network['name']} (ID: {default_network['id']})")
+                        
+                        # Create a new firewall with HTTP/HTTPS rules
+                        print("Creating new firewall with HTTP/HTTPS rules...")
+                        firewall_data = {
+                            'name': f'web-firewall-{hostname_default}',
+                            'network_id': default_network['id'],
+                            'rules': [
+                                {
+                                    'protocol': 'tcp',
+                                    'start_port': '80',
+                                    'end_port': '80',
+                                    'cidr': ['0.0.0.0/0'],
+                                    'direction': 'ingress',
+                                    'label': 'HTTP'
+                                },
+                                {
+                                    'protocol': 'tcp', 
+                                    'start_port': '443',
+                                    'end_port': '443',
+                                    'cidr': ['0.0.0.0/0'],
+                                    'direction': 'ingress',
+                                    'label': 'HTTPS'
+                                },
+                                {
+                                    'protocol': 'tcp',
+                                    'start_port': '22',
+                                    'end_port': '22', 
+                                    'cidr': ['0.0.0.0/0'],
+                                    'direction': 'ingress',
+                                    'label': 'SSH'
+                                }
+                            ]
                         }
-                    ]
-                }
-                
-                create_response = requests.post('https://api.civo.com/v2/firewalls', 
-                                              headers=headers, 
-                                              json=firewall_data)
-                if create_response.status_code in [200, 201]:
-                    firewall = create_response.json()
-                    firewall_id = firewall['id']
-                    print(f"Created new firewall: {firewall['name']} (ID: {firewall_id})")
+                    else:
+                        print("❌ Could not find any network to use for firewall")
+                        firewall_data = None
                 else:
-                    print(f"Failed to create firewall: {create_response.text}")
+                    print(f"Failed to get networks: {network_response.text}")
+                    firewall_data = None
+                
+                if firewall_data:
+                    create_response = requests.post('https://api.civo.com/v2/firewalls', 
+                                                  headers=headers, 
+                                                  json=firewall_data)
+                    if create_response.status_code in [200, 201]:
+                        firewall = create_response.json()
+                        firewall_id = firewall['id']
+                        print(f"Created new firewall: {firewall['name']} (ID: {firewall_id})")
+                    else:
+                        print(f"Failed to create firewall: {create_response.text}")
+                else:
+                    print("Skipping firewall creation due to network issues")
         else:
             print(f"Failed to get firewalls: {response.text}")
     except Exception as firewall_error:
