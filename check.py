@@ -191,6 +191,76 @@ try:
     else:
         print("No SSH keys found - proceeding without SSH key")
     
+    # Check and configure firewall
+    print("Checking firewall configuration...")
+    firewall_id = None
+    try:
+        # Check existing firewalls
+        import requests
+        headers = {'Authorization': f'bearer {civo_token}'}
+        response = requests.get('https://api.civo.com/v2/firewalls', headers=headers)
+        if response.status_code == 200:
+            firewalls = response.json()
+            if isinstance(firewalls, dict) and 'items' in firewalls:
+                firewalls = firewalls['items']
+            
+            # Look for existing firewall with HTTP rules
+            web_firewall = None
+            for fw in firewalls:
+                if 'web' in fw.get('name', '').lower() or 'http' in fw.get('name', '').lower():
+                    web_firewall = fw
+                    break
+            
+            if web_firewall:
+                firewall_id = web_firewall['id']
+                print(f"Using existing web firewall: {web_firewall['name']} (ID: {firewall_id})")
+            else:
+                # Create a new firewall with HTTP/HTTPS rules
+                print("Creating new firewall with HTTP/HTTPS rules...")
+                firewall_data = {
+                    'name': f'web-firewall-{hostname_default}',
+                    'rules': [
+                        {
+                            'protocol': 'tcp',
+                            'start_port': '80',
+                            'end_port': '80',
+                            'cidr': ['0.0.0.0/0'],
+                            'direction': 'ingress',
+                            'label': 'HTTP'
+                        },
+                        {
+                            'protocol': 'tcp', 
+                            'start_port': '443',
+                            'end_port': '443',
+                            'cidr': ['0.0.0.0/0'],
+                            'direction': 'ingress',
+                            'label': 'HTTPS'
+                        },
+                        {
+                            'protocol': 'tcp',
+                            'start_port': '22',
+                            'end_port': '22', 
+                            'cidr': ['0.0.0.0/0'],
+                            'direction': 'ingress',
+                            'label': 'SSH'
+                        }
+                    ]
+                }
+                
+                create_response = requests.post('https://api.civo.com/v2/firewalls', 
+                                              headers=headers, 
+                                              json=firewall_data)
+                if create_response.status_code in [200, 201]:
+                    firewall = create_response.json()
+                    firewall_id = firewall['id']
+                    print(f"Created new firewall: {firewall['name']} (ID: {firewall_id})")
+                else:
+                    print(f"Failed to create firewall: {create_response.text}")
+        else:
+            print(f"Failed to get firewalls: {response.text}")
+    except Exception as firewall_error:
+        print(f"Error with firewall configuration: {firewall_error}")
+
     # Check if instance already exists
     print(f"Checking if instance '{hostname_default}' already exists...")
     try:
@@ -231,6 +301,13 @@ try:
             'disk_image': template_id,
             'public_ip': 'create'
         }
+        
+        # Add firewall if we have one
+        if firewall_id:
+            create_data['firewall_id'] = firewall_id
+            print(f"Using firewall ID: {firewall_id}")
+        else:
+            print("No firewall configured - instance may not be accessible from internet")
         if ssh_id:
             create_data['ssh_key'] = ssh_id
             
@@ -267,6 +344,23 @@ try:
     else:
         instance = search_hostname[0]
         print(f"Instance already exists: {instance['hostname']} (Status: {instance['status']})")
+        
+        # Check if existing instance has proper firewall configuration
+        if firewall_id and instance.get('firewall_id') != firewall_id:
+            print(f"Updating existing instance firewall to {firewall_id}...")
+            try:
+                import requests
+                headers = {'Authorization': f'bearer {civo_token}', 'Content-Type': 'application/json'}
+                firewall_update = {'firewall_id': firewall_id}
+                response = requests.put(f'https://api.civo.com/v2/instances/{instance["id"]}', 
+                                      headers=headers, 
+                                      json=firewall_update)
+                if response.status_code == 200:
+                    print("✅ Firewall updated successfully")
+                else:
+                    print(f"⚠️ Failed to update firewall: {response.text}")
+            except Exception as fw_update_error:
+                print(f"Error updating firewall: {fw_update_error}")
     
     # Get the current instance details
     response = requests.get('https://api.civo.com/v2/instances', headers={'Authorization': f'bearer {civo_token}'})
@@ -461,18 +555,48 @@ WantedBy=multi-user.target
                     conn.run('systemctl enable nginx')
                     conn.run('systemctl restart nginx')
                     
-                    # Check service status
+                    # Check service status and troubleshoot
+                    print("Checking service status...")
                     try:
-                        result = conn.run('systemctl status fastapi-app --no-pager', hide=True)
-                        print("FastAPI service status:", result.stdout)
-                    except:
-                        print("Could not get FastAPI service status")
+                        result = conn.run('systemctl is-active fastapi-app', hide=True)
+                        if 'active' in result.stdout:
+                            print("✅ FastAPI service is running")
+                        else:
+                            print("❌ FastAPI service is not active")
+                            conn.run('systemctl status fastapi-app --no-pager')
+                    except Exception as e:
+                        print(f"❌ FastAPI service check failed: {e}")
+                        try:
+                            conn.run('systemctl status fastapi-app --no-pager')
+                            conn.run('journalctl -u fastapi-app --no-pager -n 20')
+                        except:
+                            print("Could not get detailed FastAPI service logs")
                     
                     try:
-                        result = conn.run('systemctl status nginx --no-pager', hide=True)
-                        print("Nginx service status:", result.stdout)
-                    except:
-                        print("Could not get nginx service status")
+                        result = conn.run('systemctl is-active nginx', hide=True)
+                        if 'active' in result.stdout:
+                            print("✅ Nginx service is running")
+                        else:
+                            print("❌ Nginx service is not active")
+                            conn.run('systemctl status nginx --no-pager')
+                    except Exception as e:
+                        print(f"❌ Nginx service check failed: {e}")
+                        try:
+                            conn.run('systemctl status nginx --no-pager')
+                            conn.run('nginx -t')  # Test nginx configuration
+                        except:
+                            print("Could not get detailed nginx service logs")
+                    
+                    # Additional network checks
+                    try:
+                        print("Checking if services are listening on expected ports...")
+                        conn.run('netstat -tlnp | grep -E ":(80|8000)"')
+                        print("Checking if FastAPI responds locally...")
+                        conn.run('curl -s http://localhost:8000/health || echo "FastAPI not responding"')
+                        print("Checking if nginx responds locally...")
+                        conn.run('curl -s http://localhost/health || echo "Nginx proxy not working"')
+                    except Exception as e:
+                        print(f"Network checks failed: {e}")
                     
                     print(f"🎉 Deployment complete!")
                     print(f"🌐 Main site: http://{instance['public_ip']}")
