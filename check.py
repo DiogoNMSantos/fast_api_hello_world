@@ -313,36 +313,173 @@ try:
                         },
                     )
                     
-                    # Upload and extract webroot
-                    conn.put('webroot.gz', '/tmp/webroot.gz')
-                    conn.run('cd /tmp && tar -xzvf webroot.gz')
-                    conn.run('mkdir -p /var/www/html')
-                    conn.run('cp -r /tmp/webroot/* /var/www/html/')
+                    # Upload FastAPI application files
+                    print("Uploading FastAPI application files...")
+                    conn.put('main.py', '/tmp/main.py')
+                    conn.put('requirements.txt', '/tmp/requirements.txt')
                     
-                    # Install nginx if not present
+                    # Upload and extract webroot for static files
                     try:
-                        conn.run('which nginx', hide=True)
-                        print("nginx already installed")
+                        conn.put('webroot.gz', '/tmp/webroot.gz')
+                        conn.run('cd /tmp && tar -xzvf webroot.gz')
                     except:
-                        print("Installing nginx...")
-                        if template_name and ('ubuntu' in template_name.lower() or 'debian' in template_name.lower()):
-                            # Debian/Ubuntu
-                            conn.run('apt-get update')
-                            conn.run('apt-get install -y nginx')
-                        elif template_name and 'rocky' in template_name.lower():
-                            # Rocky Linux
-                            conn.run('dnf update -y')
-                            conn.run('dnf install -y nginx')
-                        else:
-                            # Fallback to apt (most common)
-                            conn.run('apt-get update')
-                            conn.run('apt-get install -y nginx')
+                        print("webroot.gz not found, creating basic webroot...")
+                        conn.run('mkdir -p /tmp/webroot')
                     
-                    # Start nginx
+                    # Install Python, pip and system dependencies
+                    print("Installing Python and system dependencies...")
+                    if template_name and ('ubuntu' in template_name.lower() or 'debian' in template_name.lower()):
+                        # Debian/Ubuntu
+                        conn.run('apt-get update')
+                        conn.run('apt-get install -y python3 python3-pip python3-venv nginx')
+                        python_cmd = 'python3'
+                        pip_cmd = 'pip3'
+                    elif template_name and 'rocky' in template_name.lower():
+                        # Rocky Linux
+                        conn.run('dnf update -y')
+                        conn.run('dnf install -y python3 python3-pip nginx')
+                        python_cmd = 'python3'
+                        pip_cmd = 'pip3'
+                    else:
+                        # Fallback to apt (most common)
+                        conn.run('apt-get update')
+                        conn.run('apt-get install -y python3 python3-pip python3-venv nginx')
+                        python_cmd = 'python3'
+                        pip_cmd = 'pip3'
+                    
+                    # Set up application directory
+                    conn.run('mkdir -p /opt/fastapi-app')
+                    conn.run('cp /tmp/main.py /opt/fastapi-app/')
+                    conn.run('cp /tmp/requirements.txt /opt/fastapi-app/')
+                    
+                    # Create virtual environment and install dependencies
+                    print("Installing Python dependencies...")
+                    conn.run('cd /opt/fastapi-app && python3 -m venv venv')
+                    conn.run('cd /opt/fastapi-app && source venv/bin/activate && pip install --upgrade pip')
+                    conn.run('cd /opt/fastapi-app && source venv/bin/activate && pip install -r requirements.txt')
+                    
+                    # Create systemd service for FastAPI
+                    print("Creating systemd service for FastAPI...")
+                    service_content = '''[Unit]
+Description=FastAPI Hello World
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/fastapi-app
+Environment=PATH=/opt/fastapi-app/venv/bin
+ExecStart=/opt/fastapi-app/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+'''
+                    conn.run(f'cat > /etc/systemd/system/fastapi-app.service << "EOF"\n{service_content}EOF')
+                    
+                    # Configure nginx as reverse proxy
+                    print("Configuring nginx as reverse proxy...")
+                    nginx_config = '''server {
+    listen 80;
+    server_name _;
+    
+    # Serve static files for root path
+    location = / {
+        root /var/www/html;
+        try_files /index.html =404;
+    }
+    
+    # Serve static assets
+    location /static/ {
+        root /var/www/html;
+    }
+    
+    # Proxy API requests to FastAPI
+    location /docs {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    location /openapi.json {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    location /health {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    location /info {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    location /test/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+'''
+                    conn.run(f'cat > /etc/nginx/sites-available/fastapi-app << "EOF"\n{nginx_config}EOF')
+                    conn.run('rm -f /etc/nginx/sites-enabled/default')
+                    conn.run('ln -sf /etc/nginx/sites-available/fastapi-app /etc/nginx/sites-enabled/')
+                    
+                    # Set up webroot for static content
+                    conn.run('mkdir -p /var/www/html')
+                    try:
+                        conn.run('cp -r /tmp/webroot/* /var/www/html/')
+                    except:
+                        # Create a basic index.html if webroot doesn't exist
+                        basic_html = '''<!DOCTYPE html>
+<html><head><title>FastAPI Hello World</title></head>
+<body><h1>FastAPI Hello World</h1>
+<p>API is running! Check <a href="/docs">/docs</a> for API documentation.</p>
+</body></html>'''
+                        conn.run(f'cat > /var/www/html/index.html << "EOF"\n{basic_html}EOF')
+                    
+                    # Start services
+                    print("Starting FastAPI application and nginx...")
+                    conn.run('systemctl daemon-reload')
+                    conn.run('systemctl enable fastapi-app')
+                    conn.run('systemctl start fastapi-app')
                     conn.run('systemctl enable nginx')
-                    conn.run('systemctl start nginx')
+                    conn.run('systemctl restart nginx')
                     
-                    print(f"Deployment complete! Visit http://{instance['public_ip']}")
+                    # Check service status
+                    try:
+                        result = conn.run('systemctl status fastapi-app --no-pager', hide=True)
+                        print("FastAPI service status:", result.stdout)
+                    except:
+                        print("Could not get FastAPI service status")
+                    
+                    try:
+                        result = conn.run('systemctl status nginx --no-pager', hide=True)
+                        print("Nginx service status:", result.stdout)
+                    except:
+                        print("Could not get nginx service status")
+                    
+                    print(f"🎉 Deployment complete!")
+                    print(f"🌐 Main site: http://{instance['public_ip']}")
+                    print(f"📚 API docs: http://{instance['public_ip']}/docs")
+                    print(f"❤️  Health check: http://{instance['public_ip']}/health") 
+                    print(f"ℹ️  App info: http://{instance['public_ip']}/info")
+                    print(f"🧪 Test endpoint: http://{instance['public_ip']}/test/123")
                     
                 except Exception as deploy_error:
                     print(f"Deployment error (this is normal for new instances): {deploy_error}")
